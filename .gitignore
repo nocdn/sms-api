@@ -22,3 +22,7 @@ Thumbs.db
 captures/
 .externalNativeBuild/
 .cxx/
+node_modules/
+
+.env
+.env.local
