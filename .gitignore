@@ -1,0 +1,24 @@
+# Gradle files
+.gradle/
+build/
+*/build/
+
+# IDE files
+.idea/
+*.iml
+*.iws
+*.ipr
+local.properties
+.navigation/
+
+# Log files
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Other
+captures/
+.externalNativeBuild/
+.cxx/
