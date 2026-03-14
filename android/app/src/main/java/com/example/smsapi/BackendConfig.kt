@@ -53,6 +53,15 @@ object BackendConfig {
         return "$normalized/api/messages"
     }
 
+    fun buildMessagesSyncUrl(baseUrl: String): String {
+        val normalized = normalizeBackendBaseUrl(baseUrl)
+        if (normalized.isBlank()) {
+            return ""
+        }
+
+        return "$normalized/api/messages/sync"
+    }
+
     fun buildHealthUrl(baseUrl: String): String {
         val normalized = normalizeBackendBaseUrl(baseUrl)
         if (normalized.isBlank()) {

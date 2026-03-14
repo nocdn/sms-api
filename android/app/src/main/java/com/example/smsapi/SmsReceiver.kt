@@ -38,15 +38,21 @@ class SmsReceiver : BroadcastReceiver() {
 
         executor.execute {
             try {
-                postToBackend(messagesUrl, address, body, receivedAt)
+                val wasStored = postToBackend(messagesUrl, address, body, receivedAt)
+                if (wasStored) {
+                    val syncResult = SmsSyncManager.syncInboxToBackend(context.applicationContext, backendBaseUrl)
+                    if (!syncResult.success) {
+                        Log.w(TAG, "SMS stored but backend sync failed: ${syncResult.detail}")
+                    }
+                }
             } finally {
                 pendingResult.finish()
             }
         }
     }
 
-    private fun postToBackend(messagesUrl: String, address: String, body: String, receivedAt: Long) {
-        try {
+    private fun postToBackend(messagesUrl: String, address: String, body: String, receivedAt: Long): Boolean {
+        return try {
             val payload = JSONObject()
                 .put("address", address)
                 .put("body", body)
@@ -68,11 +74,13 @@ class SmsReceiver : BroadcastReceiver() {
 
                 val responseCode = connection.responseCode
                 Log.d(TAG, "Backend responded with code: $responseCode")
+                responseCode in 200..299
             } finally {
                 connection.disconnect()
             }
         } catch (error: Exception) {
             Log.e(TAG, "Failed to forward SMS: ${error.message}", error)
+            false
         }
     }
 

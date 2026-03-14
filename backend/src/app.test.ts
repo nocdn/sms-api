@@ -29,6 +29,24 @@ const createInMemoryStore = (): MessageStore => {
       return last == -1 ? messages : messages.slice(0, last);
     },
 
+    async replaceAllMessages(nextMessages: NewMessage[]) {
+      messages.splice(0, messages.length);
+
+      const createdAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const storedMessages = nextMessages
+        .map((message) => ({
+          id: String(currentId++),
+          address: message.address,
+          body: message.body,
+          receivedAt: message.receivedAt.toISOString(),
+          createdAt,
+        }))
+        .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt));
+
+      messages.push(...storedMessages);
+      return messages.length;
+    },
+
     async close() {},
   };
 };
@@ -141,6 +159,55 @@ describe("backend API", () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  it("replaces backend messages during sync so the phone is the source of truth", async () => {
+    const app = createApp(createInMemoryStore(), { logger: testLogger });
+
+    await app.request("/api/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        address: "+441111111111",
+        body: "Old message",
+        receivedAt: "2026-03-13T12:00:00.000Z",
+      }),
+    });
+
+    const syncResponse = await app.request("/api/messages/sync", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            address: "+442222222222",
+            body: "Current message",
+            receivedAt: "2026-03-13T12:05:00.000Z",
+          },
+          {
+            address: "+443333333333",
+            body: "Another current message",
+            receivedAt: "2026-03-13T12:04:00.000Z",
+          },
+        ],
+      }),
+    });
+
+    expect(syncResponse.status).toBe(200);
+    expect(await syncResponse.json()).toEqual({ count: 2 });
+
+    const listResponse = await app.request("/api/messages?last=-1");
+    const payload = await listResponse.json();
+
+    expect(payload.count).toBe(2);
+    expect(payload.data.map((message: MessageRecord) => message.body)).toEqual([
+      "Current message",
+      "Another current message",
+    ]);
   });
 
   it("extracts a code from the latest message", async () => {

@@ -94,6 +94,21 @@ export const createMessageStore = (databaseUrl: string): MessageStore => {
       return rows.map(mapMessageRow);
     },
 
+    async replaceAllMessages(messages) {
+      return await db.begin(async (tx) => {
+        await tx`DELETE FROM messages`;
+
+        for (const message of messages) {
+          await tx`
+            INSERT INTO messages (address, body, received_at)
+            VALUES (${message.address}, ${message.body}, ${message.receivedAt})
+          `;
+        }
+
+        return messages.length;
+      });
+    },
+
     async close() {
       await db.close({ timeout: 5 });
     },

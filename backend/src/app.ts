@@ -37,6 +37,10 @@ const messageSchema = z.object({
   receivedAt: receivedAtSchema,
 });
 
+const messageSyncSchema = z.object({
+  messages: z.array(messageSchema),
+});
+
 const lastQuerySchema = z.object({
   last: z
     .string()
@@ -157,6 +161,31 @@ export const createApp = (messageStore: MessageStore, options: CreateAppOptions)
       const message = await messageStore.insertMessage(payload);
 
       return c.json({ data: message }, 201);
+    },
+  );
+
+  app.post(
+    "/api/messages/sync",
+    validator("json", (value, c) => {
+      const result = messageSyncSchema.safeParse(value);
+
+      if (!result.success) {
+        return c.json(
+          {
+            error: "Invalid request body",
+            details: result.error.flatten(),
+          },
+          400,
+        );
+      }
+
+      return result.data;
+    }),
+    async (c) => {
+      const { messages } = c.req.valid("json");
+      const syncedCount = await messageStore.replaceAllMessages(messages);
+
+      return c.json({ count: syncedCount });
     },
   );
 

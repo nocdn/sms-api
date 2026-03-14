@@ -24,11 +24,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var backendUrlInput: EditText
     private lateinit var saveBackendUrlBtn: Button
+    private lateinit var syncMessagesBtn: Button
 
     private var backendBaseUrl = ""
     private var backendHealthStatus = BackendHealthStatus.NOT_CONFIGURED
     private var backendHealthDetail = "No health check has been run yet"
     private var lastHealthCheckAt: Long? = null
+    private var syncStatus = SyncStatus.NOT_RUN
+    private var syncDetail = "No sync has been run yet"
+    private var lastSyncAt: Long? = null
+    private var lastSyncedCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,12 +42,17 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         backendUrlInput = findViewById(R.id.backendUrlInput)
         saveBackendUrlBtn = findViewById(R.id.saveBackendUrlBtn)
+        syncMessagesBtn = findViewById(R.id.syncMessagesBtn)
 
         backendBaseUrl = BackendConfig.getBackendBaseUrl(this)
         backendUrlInput.setText(backendBaseUrl)
 
         saveBackendUrlBtn.setOnClickListener {
             saveBackendUrl()
+        }
+
+        syncMessagesBtn.setOnClickListener {
+            syncMessages(showToast = true)
         }
 
         checkPermissions()
@@ -59,7 +69,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissions() {
-        val permissions = mutableListOf(Manifest.permission.RECEIVE_SMS)
+        val permissions = mutableListOf(
+            Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.READ_SMS,
+        )
 
         val neededPermissions = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -103,8 +116,30 @@ class MainActivity : AppCompatActivity() {
             appendLine("Last checked:")
             appendLine(formatLastChecked())
             appendLine()
+            appendLine("Sync status:")
+            appendLine(
+                when (syncStatus) {
+                    SyncStatus.NOT_RUN -> "Not run yet"
+                    SyncStatus.SYNCING -> "Syncing phone inbox to backend"
+                    SyncStatus.SUCCESS -> "Synced successfully"
+                    SyncStatus.FAILED -> "Sync failed"
+                }
+            )
+            appendLine()
+            appendLine("Sync details:")
+            appendLine(syncDetail)
+            appendLine()
+            appendLine("Last sync:")
+            appendLine(formatLastSync())
+            appendLine()
+            appendLine("Synced message count:")
+            appendLine(lastSyncedCount.toString())
+            appendLine()
             appendLine("Incoming SMS messages are sent to your backend automatically.")
+            appendLine("Use Sync to make the backend exactly match your phone inbox.")
         }
+
+        syncMessagesBtn.isEnabled = backendBaseUrl.isNotBlank() && syncStatus != SyncStatus.SYNCING
     }
 
     private fun saveBackendUrl() {
@@ -209,8 +244,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun syncMessages(showToast: Boolean) {
+        val missingPermissions = listOf(Manifest.permission.READ_SMS).filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+            syncStatus = SyncStatus.FAILED
+            syncDetail = "Grant SMS read permission to sync the phone inbox"
+            renderStatus()
+            if (showToast) {
+                Toast.makeText(this, "Grant SMS read permission to sync", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        if (backendBaseUrl.isBlank()) {
+            syncStatus = SyncStatus.FAILED
+            syncDetail = "Save a backend URL before syncing"
+            renderStatus()
+            if (showToast) {
+                Toast.makeText(this, "Save a backend URL before syncing", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        syncStatus = SyncStatus.SYNCING
+        syncDetail = "Reading the phone inbox and replacing backend messages"
+        renderStatus()
+
+        networkExecutor.execute {
+            val result = SmsSyncManager.syncInboxToBackend(applicationContext, backendBaseUrl)
+
+            runOnUiThread {
+                syncStatus = if (result.success) SyncStatus.SUCCESS else SyncStatus.FAILED
+                syncDetail = result.detail
+                lastSyncAt = System.currentTimeMillis()
+                lastSyncedCount = result.syncedCount
+                renderStatus()
+
+                if (showToast) {
+                    val message = if (result.success) {
+                        "Synced ${result.syncedCount} messages"
+                    } else {
+                        "Sync failed"
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     private fun formatLastChecked(): String {
         val timestamp = lastHealthCheckAt ?: return "Not checked yet"
+        return DateFormat.getDateTimeInstance().format(Date(timestamp))
+    }
+
+    private fun formatLastSync(): String {
+        val timestamp = lastSyncAt ?: return "Not synced yet"
         return DateFormat.getDateTimeInstance().format(Date(timestamp))
     }
 
@@ -224,6 +316,13 @@ class MainActivity : AppCompatActivity() {
         CHECKING,
         HEALTHY,
         UNHEALTHY,
+    }
+
+    private enum class SyncStatus {
+        NOT_RUN,
+        SYNCING,
+        SUCCESS,
+        FAILED,
     }
 
     private data class HealthCheckResult(

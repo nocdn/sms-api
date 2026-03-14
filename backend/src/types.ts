@@ -18,6 +18,7 @@ export interface MessageStore {
   ensureSchema(): Promise<void>;
   insertMessage(message: NewMessage): Promise<MessageRecord>;
   listMessages(last: number): Promise<MessageRecord[]>;
+  replaceAllMessages(messages: NewMessage[]): Promise<number>;
   close(): Promise<void>;
 }
 

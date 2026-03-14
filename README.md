@@ -36,7 +36,7 @@ Open `android/` in Android Studio. In the app, save your backend base URL, for e
 http://192.168.1.128:6730
 ```
 
-The app validates `GET /health` and then forwards incoming SMS messages to `POST /api/messages`.
+The app validates `GET /health`, forwards incoming SMS messages to `POST /api/messages`, and can sync the phone inbox so the backend exactly matches the device.
 
 ## API
 
@@ -81,6 +81,24 @@ Example:
 GET /api/messages?last=5
 ```
 
+### `POST /api/messages/sync`
+
+Replaces the backend message table with the current phone inbox contents sent by the Android app.
+
+Request body:
+
+```json
+{
+  "messages": [
+    {
+      "address": "+441234567890",
+      "body": "Your code is 123456",
+      "receivedAt": "2026-03-13T12:00:00.000Z"
+    }
+  ]
+}
+```
+
 ### `GET /api/messages/code`
 
 Uses Groq with `moonshotai/kimi-k2-instruct-0905` to extract the code from the latest stored message.
@@ -98,5 +116,6 @@ Example response:
 ## Notes
 
 - The backend creates the `messages` table automatically on startup
+- The phone inbox is treated as the source of truth whenever the app runs a sync
 - Neon connections should use `sslmode=verify-full`
 - Docker Compose automatically reads the root `.env` file
