@@ -1,0 +1,73 @@
+name: Android Debug Release
+
+run-name: Debug release #${{ github.run_number }}
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-debug-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Compute release metadata
+        shell: bash
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=debug-main-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=Debug build main #${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "APK_NAME=SMSapi-main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}-debug.apk" >> "$GITHUB_ENV"
+          echo "CI_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "CI_VERSION_SUFFIX=debug.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build debug APK
+        working-directory: android
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug \
+            -PciVersionCode="$CI_VERSION_CODE" \
+            -PciVersionSuffix="$CI_VERSION_SUFFIX"
+
+      - name: Rename APK for release
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "android/app/build/outputs/apk/debug/app-debug.apk" "dist/$APK_NAME"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.APK_NAME }}
+          path: dist/${{ env.APK_NAME }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          files: dist/${{ env.APK_NAME }}
