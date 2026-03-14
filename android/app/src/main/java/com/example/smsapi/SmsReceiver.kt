@@ -36,13 +36,32 @@ class SmsReceiver : BroadcastReceiver() {
         val messagesUrl = BackendConfig.buildMessagesUrl(backendBaseUrl)
         val pendingResult = goAsync()
 
+        AppLogStore.append(
+            context,
+            TAG,
+            "Received SMS broadcast from $address at $receivedAt: ${body.take(160)}",
+        )
+
         executor.execute {
             try {
-                val wasStored = postToBackend(messagesUrl, address, body, receivedAt)
+                val wasStored = postToBackend(context.applicationContext, messagesUrl, address, body, receivedAt)
                 if (wasStored) {
-                    val syncResult = SmsSyncManager.syncInboxToBackend(context.applicationContext, backendBaseUrl)
+                    Log.d(TAG, "SMS forwarded to backend, starting source-of-truth sync")
+                    val syncResult = SmsSyncManager.syncInboxToBackend(
+                        context = context.applicationContext,
+                        backendBaseUrl = backendBaseUrl,
+                        extraMessages = listOf(
+                            SmsSyncManager.PhoneMessage(
+                                address = address,
+                                body = body,
+                                receivedAt = receivedAt,
+                            ),
+                        ),
+                    )
                     if (!syncResult.success) {
                         Log.w(TAG, "SMS stored but backend sync failed: ${syncResult.detail}")
+                    } else {
+                        Log.d(TAG, "SMS sync completed with ${syncResult.syncedCount} messages")
                     }
                 }
             } finally {
@@ -51,13 +70,19 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun postToBackend(messagesUrl: String, address: String, body: String, receivedAt: Long): Boolean {
+    private fun postToBackend(context: Context, messagesUrl: String, address: String, body: String, receivedAt: Long): Boolean {
         return try {
             val payload = JSONObject()
                 .put("address", address)
                 .put("body", body)
                 .put("receivedAt", receivedAt)
                 .toString()
+
+            AppLogStore.append(
+                context,
+                TAG,
+                "OUT POST /api/messages -> $messagesUrl for $address at $receivedAt",
+            )
 
             val connection = (URL(messagesUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -74,12 +99,22 @@ class SmsReceiver : BroadcastReceiver() {
 
                 val responseCode = connection.responseCode
                 Log.d(TAG, "Backend responded with code: $responseCode")
+                AppLogStore.append(
+                    context,
+                    TAG,
+                    "IN  POST /api/messages <- HTTP $responseCode ${connection.responseMessage}",
+                )
                 responseCode in 200..299
             } finally {
                 connection.disconnect()
             }
         } catch (error: Exception) {
             Log.e(TAG, "Failed to forward SMS: ${error.message}", error)
+            AppLogStore.append(
+                context,
+                TAG,
+                "ERR POST /api/messages <- ${error.message ?: error::class.java.simpleName}",
+            )
             false
         }
     }

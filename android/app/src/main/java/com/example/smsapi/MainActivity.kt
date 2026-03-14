@@ -3,6 +3,8 @@ package com.example.smsapi
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -22,9 +24,17 @@ class MainActivity : AppCompatActivity() {
     private val networkExecutor = Executors.newSingleThreadExecutor()
 
     private lateinit var statusText: TextView
+    private lateinit var logsText: TextView
     private lateinit var backendUrlInput: EditText
     private lateinit var saveBackendUrlBtn: Button
     private lateinit var syncMessagesBtn: Button
+    private val logsRefreshHandler = Handler(Looper.getMainLooper())
+    private val logsRefreshRunnable = object : Runnable {
+        override fun run() {
+            renderLogs()
+            logsRefreshHandler.postDelayed(this, 1000)
+        }
+    }
 
     private var backendBaseUrl = ""
     private var backendHealthStatus = BackendHealthStatus.NOT_CONFIGURED
@@ -40,12 +50,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         statusText = findViewById(R.id.statusText)
+        logsText = findViewById(R.id.logsText)
         backendUrlInput = findViewById(R.id.backendUrlInput)
         saveBackendUrlBtn = findViewById(R.id.saveBackendUrlBtn)
         syncMessagesBtn = findViewById(R.id.syncMessagesBtn)
 
         backendBaseUrl = BackendConfig.getBackendBaseUrl(this)
         backendUrlInput.setText(backendBaseUrl)
+        AppLogStore.append(this, "MainActivity", "App opened")
 
         saveBackendUrlBtn.setOnClickListener {
             saveBackendUrl()
@@ -57,7 +69,13 @@ class MainActivity : AppCompatActivity() {
 
         checkPermissions()
         renderStatus()
+        renderLogs()
 
+    }
+
+    override fun onStart() {
+        super.onStart()
+        logsRefreshHandler.post(logsRefreshRunnable)
     }
 
     override fun onResume() {
@@ -66,6 +84,11 @@ class MainActivity : AppCompatActivity() {
         if (backendBaseUrl.isNotBlank() && backendHealthStatus != BackendHealthStatus.CHECKING) {
             checkBackendHealth(showToast = false)
         }
+    }
+
+    override fun onStop() {
+        logsRefreshHandler.removeCallbacks(logsRefreshRunnable)
+        super.onStop()
     }
 
     private fun checkPermissions() {
@@ -142,6 +165,10 @@ class MainActivity : AppCompatActivity() {
         syncMessagesBtn.isEnabled = backendBaseUrl.isNotBlank() && syncStatus != SyncStatus.SYNCING
     }
 
+    private fun renderLogs() {
+        logsText.text = AppLogStore.getText(this)
+    }
+
     private fun saveBackendUrl() {
         val normalizedUrl = BackendConfig.normalizeBackendBaseUrl(backendUrlInput.text.toString())
 
@@ -151,6 +178,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         BackendConfig.saveBackendBaseUrl(this, normalizedUrl)
+        AppLogStore.append(this, "MainActivity", "Saved backend URL: $normalizedUrl")
         backendBaseUrl = normalizedUrl
         backendHealthStatus = if (normalizedUrl.isBlank()) {
             BackendHealthStatus.NOT_CONFIGURED
@@ -190,6 +218,7 @@ class MainActivity : AppCompatActivity() {
         renderStatus()
 
         networkExecutor.execute {
+            AppLogStore.append(this, "Health", "OUT GET /health -> $healthUrl")
             val result = try {
                 val connection = (URL(healthUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
@@ -200,6 +229,7 @@ class MainActivity : AppCompatActivity() {
 
                 try {
                     val responseCode = connection.responseCode
+                    AppLogStore.append(this, "Health", "IN  GET /health <- HTTP $responseCode ${connection.responseMessage}")
                     if (responseCode in 200..299) {
                         HealthCheckResult(
                             isHealthy = true,
@@ -215,6 +245,7 @@ class MainActivity : AppCompatActivity() {
                     connection.disconnect()
                 }
             } catch (error: Exception) {
+                AppLogStore.append(this, "Health", "ERR GET /health <- ${error.message ?: error::class.java.simpleName}")
                 HealthCheckResult(
                     isHealthy = false,
                     detail = error.message ?: error::class.java.simpleName,
@@ -245,6 +276,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncMessages(showToast: Boolean) {
+        AppLogStore.append(this, "MainActivity", "Manual sync requested")
         val missingPermissions = listOf(Manifest.permission.READ_SMS).filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
@@ -253,6 +285,7 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
             syncStatus = SyncStatus.FAILED
             syncDetail = "Grant SMS read permission to sync the phone inbox"
+            AppLogStore.append(this, "MainActivity", "Manual sync blocked: READ_SMS permission missing")
             renderStatus()
             if (showToast) {
                 Toast.makeText(this, "Grant SMS read permission to sync", Toast.LENGTH_SHORT).show()
@@ -263,6 +296,7 @@ class MainActivity : AppCompatActivity() {
         if (backendBaseUrl.isBlank()) {
             syncStatus = SyncStatus.FAILED
             syncDetail = "Save a backend URL before syncing"
+            AppLogStore.append(this, "MainActivity", "Manual sync blocked: backend URL not configured")
             renderStatus()
             if (showToast) {
                 Toast.makeText(this, "Save a backend URL before syncing", Toast.LENGTH_SHORT).show()
@@ -282,7 +316,9 @@ class MainActivity : AppCompatActivity() {
                 syncDetail = result.detail
                 lastSyncAt = System.currentTimeMillis()
                 lastSyncedCount = result.syncedCount
+                AppLogStore.append(this, "MainActivity", "Manual sync finished: ${result.detail}")
                 renderStatus()
+                renderLogs()
 
                 if (showToast) {
                     val message = if (result.success) {

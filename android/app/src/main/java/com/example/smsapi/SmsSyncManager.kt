@@ -13,7 +13,11 @@ import java.net.URL
 
 object SmsSyncManager {
 
-    fun syncInboxToBackend(context: Context, backendBaseUrl: String = BackendConfig.getBackendBaseUrl(context)): SyncResult {
+    fun syncInboxToBackend(
+        context: Context,
+        backendBaseUrl: String = BackendConfig.getBackendBaseUrl(context),
+        extraMessages: List<PhoneMessage> = emptyList(),
+    ): SyncResult {
         val syncUrl = BackendConfig.buildMessagesSyncUrl(backendBaseUrl)
         if (syncUrl.isBlank()) {
             return SyncResult(success = false, syncedCount = 0, detail = "No backend URL configured")
@@ -24,7 +28,15 @@ object SmsSyncManager {
         }
 
         val inboxMessages = loadInboxMessages(context)
-        return pushInboxState(syncUrl, inboxMessages)
+        val mergedMessages = mergeMessages(inboxMessages, extraMessages)
+
+        AppLogStore.append(
+            context,
+            "Sync",
+            "OUT POST /api/messages/sync -> $syncUrl with ${mergedMessages.size} messages (${extraMessages.size} extra)",
+        )
+
+        return pushInboxState(context, syncUrl, mergedMessages)
     }
 
     private fun loadInboxMessages(context: Context): List<PhoneMessage> {
@@ -60,7 +72,7 @@ object SmsSyncManager {
         }
     }
 
-    private fun pushInboxState(syncUrl: String, messages: List<PhoneMessage>): SyncResult {
+    private fun pushInboxState(context: Context, syncUrl: String, messages: List<PhoneMessage>): SyncResult {
         return try {
             val payload = JSONObject()
                 .put(
@@ -93,12 +105,22 @@ object SmsSyncManager {
 
                 val responseCode = connection.responseCode
                 if (responseCode in 200..299) {
+                    AppLogStore.append(
+                        context,
+                        "Sync",
+                        "IN  POST /api/messages/sync <- HTTP $responseCode ${connection.responseMessage}",
+                    )
                     SyncResult(
                         success = true,
                         syncedCount = messages.size,
                         detail = "Synced ${messages.size} phone messages to the backend",
                     )
                 } else {
+                    AppLogStore.append(
+                        context,
+                        "Sync",
+                        "IN  POST /api/messages/sync <- HTTP $responseCode ${connection.responseMessage}",
+                    )
                     SyncResult(
                         success = false,
                         syncedCount = messages.size,
@@ -109,6 +131,11 @@ object SmsSyncManager {
                 connection.disconnect()
             }
         } catch (error: Exception) {
+            AppLogStore.append(
+                context,
+                "Sync",
+                "ERR POST /api/messages/sync <- ${error.message ?: error::class.java.simpleName}",
+            )
             SyncResult(
                 success = false,
                 syncedCount = messages.size,
@@ -117,13 +144,21 @@ object SmsSyncManager {
         }
     }
 
+    private fun mergeMessages(inboxMessages: List<PhoneMessage>, extraMessages: List<PhoneMessage>): List<PhoneMessage> {
+        return (inboxMessages + extraMessages)
+            .distinctBy { message ->
+                Triple(message.address, message.body, message.receivedAt)
+            }
+            .sortedByDescending { message -> message.receivedAt }
+    }
+
     data class SyncResult(
         val success: Boolean,
         val syncedCount: Int,
         val detail: String,
     )
 
-    private data class PhoneMessage(
+    data class PhoneMessage(
         val address: String,
         val body: String,
         val receivedAt: Long,
