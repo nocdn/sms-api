@@ -1,47 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:padding="24dp">
-
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Configuring SMS forwarding..."
-        android:textSize="18sp" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:paddingBottom="4dp"
-        android:text="Activity Log"
-        android:textSize="14sp" />
-
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#11000000"
-        android:fillViewport="true"
-        android:padding="12dp">
-
-        <TextView
-            android:id="@+id/logsText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="No logs yet"
-            android:textIsSelectable="true"
-            android:textSize="13sp" />
-    </ScrollView>
 
     <LinearLayout
         android:id="@+id/inputContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
         android:orientation="vertical"
         android:paddingTop="16dp">
 
@@ -83,4 +51,41 @@
         </LinearLayout>
     </LinearLayout>
 
-</LinearLayout>
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:text="Configuring SMS forwarding..."
+        android:textSize="18sp" />
+
+    <TextView
+        android:id="@+id/logsLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/statusText"
+        android:layout_marginTop="16dp"
+        android:paddingBottom="4dp"
+        android:text="Activity Log"
+        android:textSize="14sp" />
+
+    <ScrollView
+        android:id="@+id/logsScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/logsLabel"
+        android:layout_above="@id/inputContainer"
+        android:background="#11000000"
+        android:fillViewport="true"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/logsText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="No logs yet"
+            android:textIsSelectable="true"
+            android:textSize="13sp" />
+    </ScrollView>
+
+</RelativeLayout>
