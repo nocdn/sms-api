@@ -3,9 +3,9 @@ plugins {
 }
 
 val baseVersionCode = 1
-val baseVersionName = "1.0"
+val baseVersionName = "0.0.1"
 val ciVersionCode = providers.gradleProperty("ciVersionCode").orNull?.toIntOrNull()
-val ciVersionSuffix = providers.gradleProperty("ciVersionSuffix").orNull
+val ciVersionName = providers.gradleProperty("ciVersionName").orNull
 
 android {
     namespace = "com.example.smsapi"
@@ -20,7 +20,7 @@ android {
         minSdk = 23
         targetSdk = 36
         versionCode = ciVersionCode ?: baseVersionCode
-        versionName = ciVersionSuffix?.let { "$baseVersionName-$it" } ?: baseVersionName
+        versionName = ciVersionName ?: baseVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

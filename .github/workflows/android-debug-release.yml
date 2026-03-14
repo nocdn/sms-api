@@ -33,11 +33,10 @@ jobs:
         shell: bash
         run: |
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=debug-main-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
-          echo "RELEASE_NAME=Debug build main #${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
-          echo "APK_NAME=SMSapi-main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}-debug.apk" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=v0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "APK_NAME=SMSapi-v0.0.${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}-debug.apk" >> "$GITHUB_ENV"
           echo "CI_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
-          echo "CI_VERSION_SUFFIX=debug.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "CI_VERSION_NAME=0.0.${GITHUB_RUN_NUMBER}-debug+${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - name: Build debug APK
         working-directory: android
@@ -46,7 +45,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug \
             -PciVersionCode="$CI_VERSION_CODE" \
-            -PciVersionSuffix="$CI_VERSION_SUFFIX"
+            -PciVersionName="$CI_VERSION_NAME"
 
       - name: Rename APK for release
         shell: bash
@@ -63,8 +62,8 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: ${{ env.RELEASE_NAME }}
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: ${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.sha }}
           prerelease: false
           generate_release_notes: true
