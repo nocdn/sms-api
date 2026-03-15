@@ -30,16 +30,29 @@ object SmsSyncManager {
         val inboxMessages = loadInboxMessages(context)
         val mergedMessages = mergeMessages(inboxMessages, extraMessages)
 
+        return syncMessagesToBackend(context, backendBaseUrl, mergedMessages)
+    }
+
+    fun syncMessagesToBackend(
+        context: Context,
+        backendBaseUrl: String,
+        messages: List<PhoneMessage>,
+    ): SyncResult {
+        val syncUrl = BackendConfig.buildMessagesSyncUrl(backendBaseUrl)
+        if (syncUrl.isBlank()) {
+            return SyncResult(success = false, syncedCount = 0, detail = "No backend URL configured")
+        }
+
         AppLogStore.append(
             context,
             "Sync",
-            "OUT POST /api/messages/sync -> $syncUrl with ${mergedMessages.size} messages (${extraMessages.size} extra)",
+            "OUT POST /api/messages/sync -> $syncUrl with ${messages.size} messages",
         )
 
-        return pushInboxState(context, syncUrl, mergedMessages)
+        return pushInboxState(context, syncUrl, messages)
     }
 
-    private fun loadInboxMessages(context: Context): List<PhoneMessage> {
+    internal fun loadInboxMessages(context: Context): List<PhoneMessage> {
         val projection = arrayOf(
             Telephony.Sms.ADDRESS,
             Telephony.Sms.BODY,

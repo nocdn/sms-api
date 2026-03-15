@@ -21,7 +21,6 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
 
     private val PERMISSION_REQUEST_CODE = 101
-    private val networkExecutor = Executors.newSingleThreadExecutor()
 
     private lateinit var statusText: TextView
     private lateinit var logsText: TextView
@@ -60,6 +59,11 @@ class MainActivity : AppCompatActivity() {
         backendBaseUrl = BackendConfig.getBackendBaseUrl(this)
         backendUrlInput.setText(backendBaseUrl)
         AppLogStore.append(this, "MainActivity", "App opened")
+
+        if (backendBaseUrl.isNotBlank()) {
+            SmsWorkScheduler.ensurePeriodicSync(this, backendBaseUrl)
+            SmsWorkScheduler.scheduleOneTimeSync(this, "app-open")
+        }
 
         saveBackendUrlBtn.setOnClickListener {
             saveBackendUrl(backendUrlInput.text.toString())
@@ -181,10 +185,14 @@ class MainActivity : AppCompatActivity() {
         renderStatus()
 
         if (normalizedUrl.isBlank()) {
+            SmsWorkScheduler.cancelPeriodicSync(this)
             onSaved?.invoke()
             Toast.makeText(this, "SMS forwarding disabled", Toast.LENGTH_SHORT).show()
             return
         }
+
+        SmsWorkScheduler.ensurePeriodicSync(this, normalizedUrl)
+        SmsWorkScheduler.scheduleOneTimeSync(this, "backend-configured")
 
         checkBackendHealth(showToast = true, onComplete = onSaved)
     }
@@ -205,7 +213,8 @@ class MainActivity : AppCompatActivity() {
         backendHealthDetail = "Calling $healthUrl"
         renderStatus()
 
-        networkExecutor.execute {
+        val executor = Executors.newSingleThreadExecutor()
+        executor.execute {
             AppLogStore.append(this, "Health", "OUT GET /health -> $healthUrl")
             val result = try {
                 val connection = (URL(healthUrl).openConnection() as HttpURLConnection).apply {
@@ -261,6 +270,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                 }
             }
+            executor.shutdown()
         }
     }
 
@@ -293,31 +303,19 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        syncStatus = SyncStatus.SYNCING
-        syncDetail = "Reading the phone inbox and replacing backend messages"
+        syncStatus = SyncStatus.SUCCESS
+        syncDetail = "Scheduled background sync"
         renderStatus()
 
-        networkExecutor.execute {
-            val result = SmsSyncManager.syncInboxToBackend(applicationContext, backendBaseUrl)
+        SmsWorkScheduler.scheduleOneTimeSync(this, "manual")
+        AppLogStore.append(this, "MainActivity", "Manual sync enqueued")
+        lastSyncAt = System.currentTimeMillis()
+        lastSyncedCount = 0
+        renderStatus()
+        renderLogs()
 
-            runOnUiThread {
-                syncStatus = if (result.success) SyncStatus.SUCCESS else SyncStatus.FAILED
-                syncDetail = result.detail
-                lastSyncAt = System.currentTimeMillis()
-                lastSyncedCount = result.syncedCount
-                AppLogStore.append(this, "MainActivity", "Manual sync finished: ${result.detail}")
-                renderStatus()
-                renderLogs()
-
-                if (showToast) {
-                    val message = if (result.success) {
-                        "Synced ${result.syncedCount} messages"
-                    } else {
-                        "Sync failed"
-                    }
-                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-                }
-            }
+        if (showToast) {
+            Toast.makeText(this, "Background sync scheduled", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -327,7 +325,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        networkExecutor.shutdownNow()
         super.onDestroy()
     }
 

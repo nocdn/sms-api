@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
-import java.util.concurrent.Executors
 
 class SmsReceiver : BroadcastReceiver() {
 
@@ -16,8 +15,7 @@ class SmsReceiver : BroadcastReceiver() {
 
         val backendBaseUrl = BackendConfig.getBackendBaseUrl(context)
         if (backendBaseUrl.isBlank()) {
-            Log.w(TAG, "No backend URL configured, skipping SMS forward.")
-            return
+            Log.w(TAG, "No backend URL configured, queueing SMS for later.")
         }
 
         val smsParts = Telephony.Sms.Intents.getMessagesFromIntent(intent)
@@ -29,41 +27,26 @@ class SmsReceiver : BroadcastReceiver() {
         val address = smsParts.firstOrNull()?.displayOriginatingAddress?.takeUnless { it.isBlank() } ?: "Unknown"
         val body = smsParts.joinToString(separator = "") { it.displayMessageBody.orEmpty() }
         val receivedAt = smsParts.maxOfOrNull { it.timestampMillis } ?: System.currentTimeMillis()
-        val pendingResult = goAsync()
+
+        val enqueueResult = SmsQueueStore.enqueueMessage(
+            context = context,
+            address = address,
+            body = body,
+            receivedAt = receivedAt,
+        )
 
         AppLogStore.append(
             context,
             TAG,
-            "Received SMS broadcast from $address at $receivedAt: ${body.take(160)}",
+            "Queued SMS from $address at $receivedAt (${enqueueResult.reason})",
         )
 
-        executor.execute {
-            try {
-                val syncResult = SmsSyncManager.syncInboxToBackend(
-                    context = context.applicationContext,
-                    backendBaseUrl = backendBaseUrl,
-                    extraMessages = listOf(
-                        SmsSyncManager.PhoneMessage(
-                            address = address,
-                            body = body,
-                            receivedAt = receivedAt,
-                        ),
-                    ),
-                )
-
-                if (!syncResult.success) {
-                    Log.w(TAG, "SMS sync failed: ${syncResult.detail}")
-                } else {
-                    Log.d(TAG, "SMS sync completed with ${syncResult.syncedCount} messages")
-                }
-            } finally {
-                pendingResult.finish()
-            }
+        if (backendBaseUrl.isNotBlank()) {
+            SmsWorkScheduler.scheduleOneTimeSync(context, "sms-received")
         }
     }
 
     companion object {
         private const val TAG = "SmsReceiver"
-        private val executor = Executors.newSingleThreadExecutor()
     }
 }
