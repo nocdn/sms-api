@@ -144,7 +144,7 @@ object SmsSyncManager {
         }
     }
 
-    private fun mergeMessages(inboxMessages: List<PhoneMessage>, extraMessages: List<PhoneMessage>): List<PhoneMessage> {
+    internal fun mergeMessages(inboxMessages: List<PhoneMessage>, extraMessages: List<PhoneMessage>): List<PhoneMessage> {
         return (inboxMessages + extraMessages)
             .distinctBy { message ->
                 Triple(message.address, message.body, message.receivedAt)

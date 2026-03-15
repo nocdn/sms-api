@@ -38,6 +38,14 @@ object AppLogStore {
         }
     }
 
+    @Synchronized
+    fun clear(context: Context) {
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(LOGS_KEY)
+            .apply()
+    }
+
     private fun readEntries(context: Context): List<String> {
         val rawValue = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(LOGS_KEY, null)

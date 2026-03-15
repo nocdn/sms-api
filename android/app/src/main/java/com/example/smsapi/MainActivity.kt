@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var backendUrlInput: EditText
     private lateinit var saveBackendUrlBtn: Button
     private lateinit var syncMessagesBtn: Button
+    private lateinit var clearLogsBtn: Button
     private val logsRefreshHandler = Handler(Looper.getMainLooper())
     private val logsRefreshRunnable = object : Runnable {
         override fun run() {
@@ -54,23 +55,27 @@ class MainActivity : AppCompatActivity() {
         backendUrlInput = findViewById(R.id.backendUrlInput)
         saveBackendUrlBtn = findViewById(R.id.saveBackendUrlBtn)
         syncMessagesBtn = findViewById(R.id.syncMessagesBtn)
+        clearLogsBtn = findViewById(R.id.clearLogsBtn)
 
         backendBaseUrl = BackendConfig.getBackendBaseUrl(this)
         backendUrlInput.setText(backendBaseUrl)
         AppLogStore.append(this, "MainActivity", "App opened")
 
         saveBackendUrlBtn.setOnClickListener {
-            saveBackendUrl()
+            saveBackendUrl(backendUrlInput.text.toString())
         }
 
         syncMessagesBtn.setOnClickListener {
             syncMessages(showToast = true)
         }
 
+        clearLogsBtn.setOnClickListener {
+            clearLogs()
+        }
+
         checkPermissions()
         renderStatus()
         renderLogs()
-
     }
 
     override fun onStart() {
@@ -108,8 +113,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderStatus() {
         statusText.text = buildString {
-            appendLine("SMS Forwarding")
-            appendLine()
             appendLine("Status:")
             appendLine(
                 when (backendHealthStatus) {
@@ -133,44 +136,26 @@ class MainActivity : AppCompatActivity() {
                 }
             )
             appendLine()
-            appendLine("Health details:")
-            appendLine(backendHealthDetail)
-            appendLine()
             appendLine("Last checked:")
             appendLine(formatLastChecked())
-            appendLine()
-            appendLine("Sync status:")
-            appendLine(
-                when (syncStatus) {
-                    SyncStatus.NOT_RUN -> "Not run yet"
-                    SyncStatus.SYNCING -> "Syncing phone inbox to backend"
-                    SyncStatus.SUCCESS -> "Synced successfully"
-                    SyncStatus.FAILED -> "Sync failed"
-                }
-            )
-            appendLine()
-            appendLine("Sync details:")
-            appendLine(syncDetail)
-            appendLine()
-            appendLine("Last sync:")
-            appendLine(formatLastSync())
-            appendLine()
-            appendLine("Synced message count:")
-            appendLine(lastSyncedCount.toString())
-            appendLine()
-            appendLine("Incoming SMS messages are sent to your backend automatically.")
-            appendLine("Use Sync to make the backend exactly match your phone inbox.")
         }
 
         syncMessagesBtn.isEnabled = backendBaseUrl.isNotBlank() && syncStatus != SyncStatus.SYNCING
+        saveBackendUrlBtn.isEnabled = syncStatus != SyncStatus.SYNCING
     }
 
     private fun renderLogs() {
         logsText.text = AppLogStore.getText(this)
     }
 
-    private fun saveBackendUrl() {
-        val normalizedUrl = BackendConfig.normalizeBackendBaseUrl(backendUrlInput.text.toString())
+    private fun clearLogs() {
+        AppLogStore.clear(this)
+        renderLogs()
+        Toast.makeText(this, "Logs cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveBackendUrl(inputValue: String, onSaved: (() -> Unit)? = null) {
+        val normalizedUrl = BackendConfig.normalizeBackendBaseUrl(inputValue)
 
         if (!BackendConfig.isValidBackendBaseUrl(normalizedUrl)) {
             Toast.makeText(this, "Enter a valid http(s) backend URL", Toast.LENGTH_SHORT).show()
@@ -180,6 +165,8 @@ class MainActivity : AppCompatActivity() {
         BackendConfig.saveBackendBaseUrl(this, normalizedUrl)
         AppLogStore.append(this, "MainActivity", "Saved backend URL: $normalizedUrl")
         backendBaseUrl = normalizedUrl
+        backendUrlInput.setText(normalizedUrl)
+        backendUrlInput.setSelection(backendUrlInput.text.length)
         backendHealthStatus = if (normalizedUrl.isBlank()) {
             BackendHealthStatus.NOT_CONFIGURED
         } else {
@@ -191,18 +178,18 @@ class MainActivity : AppCompatActivity() {
             "Waiting to call /health"
         }
         lastHealthCheckAt = null
-        backendUrlInput.setText(normalizedUrl)
         renderStatus()
 
         if (normalizedUrl.isBlank()) {
+            onSaved?.invoke()
             Toast.makeText(this, "SMS forwarding disabled", Toast.LENGTH_SHORT).show()
             return
         }
 
-        checkBackendHealth(showToast = true)
+        checkBackendHealth(showToast = true, onComplete = onSaved)
     }
 
-    private fun checkBackendHealth(showToast: Boolean) {
+    private fun checkBackendHealth(showToast: Boolean, onComplete: (() -> Unit)? = null) {
         val healthUrl = BackendConfig.buildHealthUrl(backendBaseUrl)
 
         if (healthUrl.isBlank()) {
@@ -210,6 +197,7 @@ class MainActivity : AppCompatActivity() {
             backendHealthDetail = "Health check disabled"
             lastHealthCheckAt = null
             renderStatus()
+            onComplete?.invoke()
             return
         }
 
@@ -262,6 +250,7 @@ class MainActivity : AppCompatActivity() {
                 lastHealthCheckAt = System.currentTimeMillis()
 
                 renderStatus()
+                onComplete?.invoke()
 
                 if (showToast) {
                     val message = if (result.isHealthy) {
@@ -334,11 +323,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun formatLastChecked(): String {
         val timestamp = lastHealthCheckAt ?: return "Not checked yet"
-        return DateFormat.getDateTimeInstance().format(Date(timestamp))
-    }
-
-    private fun formatLastSync(): String {
-        val timestamp = lastSyncAt ?: return "Not synced yet"
         return DateFormat.getDateTimeInstance().format(Date(timestamp))
     }
 
