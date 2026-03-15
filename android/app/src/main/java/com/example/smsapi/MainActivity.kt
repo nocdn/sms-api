@@ -1,10 +1,14 @@
 package com.example.smsapi
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -12,10 +16,13 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
@@ -28,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var saveBackendUrlBtn: Button
     private lateinit var syncMessagesBtn: Button
     private lateinit var clearLogsBtn: Button
+    private lateinit var saveLogsBtn: Button
     private val logsRefreshHandler = Handler(Looper.getMainLooper())
     private val logsRefreshRunnable = object : Runnable {
         override fun run() {
@@ -55,6 +63,7 @@ class MainActivity : AppCompatActivity() {
         saveBackendUrlBtn = findViewById(R.id.saveBackendUrlBtn)
         syncMessagesBtn = findViewById(R.id.syncMessagesBtn)
         clearLogsBtn = findViewById(R.id.clearLogsBtn)
+        saveLogsBtn = findViewById(R.id.saveLogsBtn)
 
         backendBaseUrl = BackendConfig.getBackendBaseUrl(this)
         backendUrlInput.setText(backendBaseUrl)
@@ -75,6 +84,10 @@ class MainActivity : AppCompatActivity() {
 
         clearLogsBtn.setOnClickListener {
             clearLogs()
+        }
+
+        saveLogsBtn.setOnClickListener {
+            saveLogs()
         }
 
         checkPermissions()
@@ -156,6 +169,43 @@ class MainActivity : AppCompatActivity() {
         AppLogStore.clear(this)
         renderLogs()
         Toast.makeText(this, "Logs cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveLogs() {
+        val logContent = AppLogStore.getText(this)
+        if (logContent == "No logs yet") {
+            Toast.makeText(this, "No logs to save", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val fileName = "sms-api-logs_$timestamp.log"
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { it.write(logContent.toByteArray()) }
+                    Toast.makeText(this, "Logs saved to Downloads/$fileName", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Failed to save logs", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val file = File(downloadsDir, fileName)
+                file.writeText(logContent)
+                Toast.makeText(this, "Logs saved to Downloads/$fileName", Toast.LENGTH_LONG).show()
+            }
+            AppLogStore.append(this, "MainActivity", "Logs saved to Downloads/$fileName")
+        } catch (e: Exception) {
+            Toast.makeText(this, "Failed to save logs: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun saveBackendUrl(inputValue: String, onSaved: (() -> Unit)? = null) {

@@ -75,6 +75,14 @@
                 android:text="Clear Logs"
                 android:textSize="12sp" />
 
+            <Button
+                android:id="@+id/saveLogsBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="Save"
+                android:textSize="12sp" />
+
             <TextView
                 android:id="@+id/logsLabel"
                 android:layout_width="0dp"

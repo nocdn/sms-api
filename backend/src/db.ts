@@ -48,12 +48,18 @@ export const createMessageStore = (databaseUrl: string): MessageStore => {
         CREATE INDEX IF NOT EXISTS messages_received_at_idx
         ON messages (received_at DESC)
       `;
+
+      await db`
+        CREATE UNIQUE INDEX IF NOT EXISTS messages_dedup_idx
+        ON messages (address, body, received_at)
+      `;
     },
 
     async insertMessage(message) {
       const rows = (await db`
         INSERT INTO messages (address, body, received_at)
         VALUES (${message.address}, ${message.body}, ${message.receivedAt})
+        ON CONFLICT (address, body, received_at) DO NOTHING
         RETURNING
           id::text AS "id",
           address,
@@ -62,9 +68,24 @@ export const createMessageStore = (databaseUrl: string): MessageStore => {
           created_at AS "createdAt"
       `) as MessageRow[];
 
-      const [row] = rows;
+      if (rows.length === 0) {
+        const existing = (await db`
+          SELECT
+            id::text AS "id",
+            address,
+            body,
+            received_at AS "receivedAt",
+            created_at AS "createdAt"
+          FROM messages
+          WHERE address = ${message.address}
+            AND body = ${message.body}
+            AND received_at = ${message.receivedAt}
+          LIMIT 1
+        `) as MessageRow[];
+        return mapMessageRow(existing[0]);
+      }
 
-      return mapMessageRow(row);
+      return mapMessageRow(rows[0]);
     },
 
     async listMessages(last) {
