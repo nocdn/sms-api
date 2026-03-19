@@ -123,6 +123,7 @@ export const createMessageStore = (databaseUrl: string): MessageStore => {
           await tx`
             INSERT INTO messages (address, body, received_at)
             VALUES (${message.address}, ${message.body}, ${message.receivedAt})
+            ON CONFLICT (address, body, received_at) DO NOTHING
           `;
         }
 

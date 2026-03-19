@@ -7,7 +7,7 @@ export const createLogger = (level: string): Logger => {
     level,
     timestamp: stdTimeFunctions.isoTime,
     formatters: {
-      level: () => ({}),
+      level: (label: string) => ({ level: label }),
     },
     serializers: {
       err: pino.stdSerializers.err,
