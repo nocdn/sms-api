@@ -10,4 +10,4 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${PORT:-6730}:6730"
-    restart: unless-stopped
+    restart: always
