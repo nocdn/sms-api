@@ -12,11 +12,8 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_MY_PACKAGE_REPLACED,
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             -> {
-                val backendBaseUrl = BackendConfig.getBackendBaseUrl(context)
-                SmsWorkScheduler.ensurePeriodicSync(context, backendBaseUrl)
-                if (backendBaseUrl.isNotBlank()) {
-                    SmsWorkScheduler.scheduleOneTimeSync(context, "boot")
-                }
+                AppLogStore.append(context, "BootReceiver", "Starting foreground server after system event ${intent.action}")
+                ServerForegroundService.start(context)
             }
         }
     }

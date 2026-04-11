@@ -1,121 +1,97 @@
-# SMS API Monorepo
+# SMS API
 
-Android app + Bun/Hono backend for forwarding incoming SMS messages to a Neon-hosted PostgreSQL database.
+This project is now a single Android app. The phone itself runs an HTTP server and serves SMS messages directly from the device, so there is no separate backend, database, or Docker deployment anymore.
 
 ## Structure
 
-- `android/` - Android app that receives SMS and forwards it to the backend
-- `backend/` - Bun + Hono API backed by PostgreSQL
+- `android/` - Android app with a foreground service that hosts the HTTP API on the phone
 
-## Environment
+## How It Works
 
-Create a root `.env` file:
-
-```env
-DATABASE_URL=postgresql://username:password@host/database?sslmode=verify-full
-PORT=6730
-GROQ_API_KEY=your-groq-api-key
-LOG_LEVEL=info
-```
-
-## Deploy
-
-Run from the repo root:
-
-```bash
-docker compose up -d
-```
-
-The backend will be available on `http://<host>:6730` by default.
+- The app starts a foreground service that runs an HTTP server on port `6770`
+- The service survives app dismissal and is started again after reboot
+- `GET /api/messages` reads SMS directly from the Android SMS content provider
+- SMS stay on the phone; nothing is synced to an external backend
 
 ## Android App
 
-Open `android/` in Android Studio. In the app, save your backend base URL, for example:
+Open `android/` in Android Studio or build with Gradle.
+
+When the app launches it:
+
+- requests `READ_SMS` permission if needed
+- starts the foreground server service
+- shows local server status and logs
+
+The app serves HTTP on:
 
 ```text
-http://192.168.1.128:6730
+http://127.0.0.1:6770
 ```
 
-The app validates `GET /health`, forwards incoming SMS messages to `POST /api/messages`, and can sync the phone inbox so the backend exactly matches the device.
+Use your own port-forwarding setup to expose that port to other devices.
 
 ## API
 
 ### `GET /health`
 
-Returns service health.
+Returns server health and runtime metadata.
 
 Example response:
 
 ```json
-{ "ok": true }
-```
-
-### `POST /api/messages`
-
-Stores a received SMS message.
-
-Request body:
-
-```json
 {
-  "address": "+441234567890",
-  "body": "Your code is 123456",
-  "receivedAt": "2026-03-13T12:00:00.000Z"
+  "ok": true,
+  "service": "smsapi-phone",
+  "port": 6770,
+  "startedAt": "2026-04-11T11:00:00.000Z",
+  "uptimeMs": 123456,
+  "smsPermissionGranted": true,
+  "messageScope": "all_device_sms",
+  "appVersion": "0.0.1"
 }
 ```
 
 ### `GET /api/messages`
 
-Returns stored messages ordered newest first.
+Returns SMS messages ordered newest first.
 
 Query parameters:
 
 - `last` omitted - return the latest message
 - `last=1` - return the latest message
 - `last=<positive integer>` - return that many latest messages
-- `last=-1` - return all messages
+- `last=-1` - return all SMS messages available through the device SMS provider
 
-Example:
+Example requests:
 
 ```text
+GET /api/messages
 GET /api/messages?last=5
+GET /api/messages?last=-1
 ```
 
-### `POST /api/messages/sync`
-
-Replaces the backend message table with the current phone inbox contents sent by the Android app.
-
-Request body:
+Example response:
 
 ```json
 {
-  "messages": [
+  "data": [
     {
       "address": "+441234567890",
       "body": "Your code is 123456",
       "receivedAt": "2026-03-13T12:00:00.000Z"
     }
-  ]
+  ],
+  "count": 1
 }
 ```
 
-### `GET /api/messages/code`
+If `READ_SMS` permission is missing, `GET /api/messages` returns `503`.
 
-Uses Groq with `moonshotai/kimi-k2-instruct-0905` to extract the code from the latest stored message.
-
-If Groq is unavailable or not configured, the backend falls back to built-in regex extraction.
-
-Returns the extracted code as JSON.
-
-Example response:
-
-```json
-{ "code": "123456" }
-```
+If `last` is invalid, `GET /api/messages` returns `400`.
 
 ## Notes
 
-- The backend creates the `messages` table automatically on startup
-- The phone inbox is treated as the source of truth whenever the app runs a sync
-- Neon connections should use `sslmode=verify-full`
-- Docker Compose automatically reads the root `.env` file
+- The app does not add CORS headers
+- The phone is the only source of truth for messages
+- The foreground notification is required so Android keeps the server alive in the background

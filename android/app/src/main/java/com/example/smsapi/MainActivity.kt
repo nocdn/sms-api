@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.widget.Button
-import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -18,22 +17,27 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.net.URL
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Enumeration
 import java.util.Locale
 import java.util.concurrent.Executors
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
     private val PERMISSION_REQUEST_CODE = 101
+    private val statusRefreshHandler = Handler(Looper.getMainLooper())
 
     private lateinit var statusText: TextView
     private lateinit var logsText: TextView
-    private lateinit var backendUrlInput: EditText
-    private lateinit var saveBackendUrlBtn: Button
-    private lateinit var syncMessagesBtn: Button
+    private lateinit var startServerBtn: Button
+    private lateinit var stopServerBtn: Button
+    private lateinit var refreshStatusBtn: Button
     private lateinit var clearLogsBtn: Button
     private lateinit var saveLogsBtn: Button
     private val logsRefreshHandler = Handler(Looper.getMainLooper())
@@ -44,14 +48,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private var backendBaseUrl = ""
-    private var backendHealthStatus = BackendHealthStatus.NOT_CONFIGURED
-    private var backendHealthDetail = "No health check has been run yet"
+    private var serverHealthStatus = ServerHealthStatus.CHECKING
+    private var serverHealthDetail = "No health check has been run yet"
     private var lastHealthCheckAt: Long? = null
-    private var syncStatus = SyncStatus.NOT_RUN
-    private var syncDetail = "No sync has been run yet"
-    private var lastSyncAt: Long? = null
-    private var lastSyncedCount = 0
+    private var serverStartedAt: String? = null
+    private var serverUptimeMs: Long? = null
+    private var smsPermissionGranted = false
+    private var appVersion = "Unknown"
+    private var messageScope = "all_device_sms"
+    private var localNetworkAddress: String? = null
+    private var localNetworkMacAddress: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,27 +65,26 @@ class MainActivity : AppCompatActivity() {
 
         statusText = findViewById(R.id.statusText)
         logsText = findViewById(R.id.logsText)
-        backendUrlInput = findViewById(R.id.backendUrlInput)
-        saveBackendUrlBtn = findViewById(R.id.saveBackendUrlBtn)
-        syncMessagesBtn = findViewById(R.id.syncMessagesBtn)
+        startServerBtn = findViewById(R.id.startServerBtn)
+        stopServerBtn = findViewById(R.id.stopServerBtn)
+        refreshStatusBtn = findViewById(R.id.refreshStatusBtn)
         clearLogsBtn = findViewById(R.id.clearLogsBtn)
         saveLogsBtn = findViewById(R.id.saveLogsBtn)
 
-        backendBaseUrl = BackendConfig.getBackendBaseUrl(this)
-        backendUrlInput.setText(backendBaseUrl)
         AppLogStore.append(this, "MainActivity", "App opened")
+        appVersion = AppMetadata.versionName(this)
+        refreshLocalNetworkDetails()
 
-        if (backendBaseUrl.isNotBlank()) {
-            SmsWorkScheduler.ensurePeriodicSync(this, backendBaseUrl)
-            SmsWorkScheduler.scheduleOneTimeSync(this, "app-open")
+        startServerBtn.setOnClickListener {
+            startServer()
         }
 
-        saveBackendUrlBtn.setOnClickListener {
-            saveBackendUrl(backendUrlInput.text.toString())
+        stopServerBtn.setOnClickListener {
+            stopServer()
         }
 
-        syncMessagesBtn.setOnClickListener {
-            syncMessages(showToast = true)
+        refreshStatusBtn.setOnClickListener {
+            checkServerHealth(showToast = true)
         }
 
         clearLogsBtn.setOnClickListener {
@@ -91,8 +96,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         checkPermissions()
+        ServerForegroundService.start(this)
         renderStatus()
         renderLogs()
+        scheduleHealthRefresh(showToast = false)
     }
 
     override fun onStart() {
@@ -102,22 +109,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-
-        if (backendBaseUrl.isNotBlank() && backendHealthStatus != BackendHealthStatus.CHECKING) {
-            checkBackendHealth(showToast = false)
-        }
+        refreshLocalNetworkDetails()
+        checkServerHealth(showToast = false)
     }
 
     override fun onStop() {
         logsRefreshHandler.removeCallbacks(logsRefreshRunnable)
+        statusRefreshHandler.removeCallbacksAndMessages(null)
         super.onStop()
     }
 
     private fun checkPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.READ_SMS,
-        )
+        val permissions = listOf(Manifest.permission.READ_SMS)
 
         val neededPermissions = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -129,36 +132,52 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderStatus() {
+        if (localNetworkAddress == null && localNetworkMacAddress == null) {
+            refreshLocalNetworkDetails()
+        }
+
         statusText.text = buildString {
-            appendLine("Status:")
+            appendLine("Server:")
             appendLine(
-                when (backendHealthStatus) {
-                    BackendHealthStatus.NOT_CONFIGURED -> "Waiting for backend URL"
-                    BackendHealthStatus.CHECKING -> "Checking backend health"
-                    BackendHealthStatus.HEALTHY -> "Ready to forward incoming SMS"
-                    BackendHealthStatus.UNHEALTHY -> "Backend health check failed"
+                when (serverHealthStatus) {
+                    ServerHealthStatus.CHECKING -> "Checking localhost health"
+                    ServerHealthStatus.HEALTHY -> "Running"
+                    ServerHealthStatus.UNHEALTHY -> "Not reachable"
                 }
             )
             appendLine()
-            appendLine("Backend URL:")
-            appendLine(if (backendBaseUrl.isBlank()) "Not configured" else backendBaseUrl)
+            appendLine("Port:")
+            appendLine(ApiContract.SERVER_PORT.toString())
             appendLine()
-            appendLine("Health check:")
-            appendLine(
-                when (backendHealthStatus) {
-                    BackendHealthStatus.NOT_CONFIGURED -> "Not configured"
-                    BackendHealthStatus.CHECKING -> "Checking /health..."
-                    BackendHealthStatus.HEALTHY -> "Working"
-                    BackendHealthStatus.UNHEALTHY -> "Not working"
-                }
-            )
+            appendLine("Local network IP:")
+            appendLine(localNetworkAddress ?: "Unavailable")
+            appendLine()
+            appendLine("MAC address:")
+            appendLine(localNetworkMacAddress ?: "Unavailable")
+            appendLine()
+            appendLine("Health detail:")
+            appendLine(serverHealthDetail)
+            appendLine()
+            appendLine("Started at:")
+            appendLine(serverStartedAt ?: "Unknown")
+            appendLine()
+            appendLine("Uptime:")
+            appendLine(formatUptime(serverUptimeMs))
+            appendLine()
+            appendLine("READ_SMS permission:")
+            appendLine(if (smsPermissionGranted) "Granted" else "Missing")
+            appendLine()
+            appendLine("App version:")
+            appendLine(appVersion)
+            appendLine()
+            appendLine("Message scope:")
+            appendLine(messageScope)
             appendLine()
             appendLine("Last checked:")
             appendLine(formatLastChecked())
         }
 
-        syncMessagesBtn.isEnabled = backendBaseUrl.isNotBlank() && syncStatus != SyncStatus.SYNCING
-        saveBackendUrlBtn.isEnabled = syncStatus != SyncStatus.SYNCING
+        refreshStatusBtn.isEnabled = serverHealthStatus != ServerHealthStatus.CHECKING
     }
 
     private fun renderLogs() {
@@ -208,59 +227,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveBackendUrl(inputValue: String, onSaved: (() -> Unit)? = null) {
-        val normalizedUrl = BackendConfig.normalizeBackendBaseUrl(inputValue)
-
-        if (!BackendConfig.isValidBackendBaseUrl(normalizedUrl)) {
-            Toast.makeText(this, "Enter a valid http(s) backend URL", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        BackendConfig.saveBackendBaseUrl(this, normalizedUrl)
-        AppLogStore.append(this, "MainActivity", "Saved backend URL: $normalizedUrl")
-        backendBaseUrl = normalizedUrl
-        backendUrlInput.setText(normalizedUrl)
-        backendUrlInput.setSelection(backendUrlInput.text.length)
-        backendHealthStatus = if (normalizedUrl.isBlank()) {
-            BackendHealthStatus.NOT_CONFIGURED
-        } else {
-            BackendHealthStatus.CHECKING
-        }
-        backendHealthDetail = if (normalizedUrl.isBlank()) {
-            "Health check disabled"
-        } else {
-            "Waiting to call /health"
-        }
-        lastHealthCheckAt = null
+    private fun startServer() {
+        AppLogStore.append(this, "MainActivity", "Start server requested")
+        ServerForegroundService.start(this)
+        serverHealthStatus = ServerHealthStatus.CHECKING
+        serverHealthDetail = "Waiting for the foreground service to answer /health"
         renderStatus()
-
-        if (normalizedUrl.isBlank()) {
-            SmsWorkScheduler.cancelPeriodicSync(this)
-            onSaved?.invoke()
-            Toast.makeText(this, "SMS forwarding disabled", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        SmsWorkScheduler.ensurePeriodicSync(this, normalizedUrl)
-        SmsWorkScheduler.scheduleOneTimeSync(this, "backend-configured")
-
-        checkBackendHealth(showToast = true, onComplete = onSaved)
+        scheduleHealthRefresh(showToast = true)
     }
 
-    private fun checkBackendHealth(showToast: Boolean, onComplete: (() -> Unit)? = null) {
-        val healthUrl = BackendConfig.buildHealthUrl(backendBaseUrl)
+    private fun stopServer() {
+        AppLogStore.append(this, "MainActivity", "Stop server requested")
+        ServerForegroundService.stop(this)
+        serverHealthStatus = ServerHealthStatus.CHECKING
+        serverHealthDetail = "Waiting for the foreground service to stop"
+        renderStatus()
+        scheduleHealthRefresh(showToast = true)
+    }
 
-        if (healthUrl.isBlank()) {
-            backendHealthStatus = BackendHealthStatus.NOT_CONFIGURED
-            backendHealthDetail = "Health check disabled"
-            lastHealthCheckAt = null
-            renderStatus()
-            onComplete?.invoke()
-            return
-        }
+    private fun scheduleHealthRefresh(showToast: Boolean) {
+        statusRefreshHandler.removeCallbacksAndMessages(null)
+        statusRefreshHandler.postDelayed({
+            checkServerHealth(showToast)
+        }, 750)
+    }
 
-        backendHealthStatus = BackendHealthStatus.CHECKING
-        backendHealthDetail = "Calling $healthUrl"
+    private fun checkServerHealth(showToast: Boolean) {
+        val healthUrl = ServerForegroundService.healthUrl()
+
+        serverHealthStatus = ServerHealthStatus.CHECKING
+        serverHealthDetail = "Calling $healthUrl"
         renderStatus()
 
         val executor = Executors.newSingleThreadExecutor()
@@ -278,14 +274,18 @@ class MainActivity : AppCompatActivity() {
                     val responseCode = connection.responseCode
                     AppLogStore.append(this, "Health", "IN  GET /health <- HTTP $responseCode ${connection.responseMessage}")
                     if (responseCode in 200..299) {
+                        val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
+                        val payload = JSONObject(responseBody)
                         HealthCheckResult(
                             isHealthy = true,
                             detail = "HTTP $responseCode ${connection.responseMessage}",
+                            payload = payload,
                         )
                     } else {
                         HealthCheckResult(
                             isHealthy = false,
                             detail = "HTTP $responseCode ${connection.responseMessage}",
+                            payload = null,
                         )
                     }
                 } finally {
@@ -296,26 +296,34 @@ class MainActivity : AppCompatActivity() {
                 HealthCheckResult(
                     isHealthy = false,
                     detail = error.message ?: error::class.java.simpleName,
+                    payload = null,
                 )
             }
 
             runOnUiThread {
-                backendHealthStatus = if (result.isHealthy) {
-                    BackendHealthStatus.HEALTHY
+                serverHealthStatus = if (result.isHealthy) {
+                    ServerHealthStatus.HEALTHY
                 } else {
-                    BackendHealthStatus.UNHEALTHY
+                    ServerHealthStatus.UNHEALTHY
                 }
-                backendHealthDetail = result.detail
+                serverHealthDetail = result.detail
                 lastHealthCheckAt = System.currentTimeMillis()
+                serverStartedAt = result.payload?.optString("startedAt")?.takeUnless { it.isNullOrBlank() }
+                serverUptimeMs = result.payload?.takeIf { it.has("uptimeMs") }?.optLong("uptimeMs")
+                smsPermissionGranted = result.payload?.optBoolean("smsPermissionGranted")
+                    ?: DeviceSmsStore.hasReadPermission(this)
+                appVersion = result.payload?.optString("appVersion")?.takeUnless { it.isNullOrBlank() }
+                    ?: AppMetadata.versionName(this)
+                messageScope = result.payload?.optString("messageScope")?.takeUnless { it.isNullOrBlank() }
+                    ?: "all_device_sms"
 
                 renderStatus()
-                onComplete?.invoke()
 
                 if (showToast) {
                     val message = if (result.isHealthy) {
-                        "Backend URL saved and health check passed"
+                        "Phone server is reachable"
                     } else {
-                        "Backend URL saved, but /health failed"
+                        "Phone server is not reachable"
                     }
                     Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                 }
@@ -324,76 +332,80 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun syncMessages(showToast: Boolean) {
-        AppLogStore.append(this, "MainActivity", "Manual sync requested")
-        val missingPermissions = listOf(Manifest.permission.READ_SMS).filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (missingPermissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-            syncStatus = SyncStatus.FAILED
-            syncDetail = "Grant SMS read permission to sync the phone inbox"
-            AppLogStore.append(this, "MainActivity", "Manual sync blocked: READ_SMS permission missing")
-            renderStatus()
-            if (showToast) {
-                Toast.makeText(this, "Grant SMS read permission to sync", Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        if (backendBaseUrl.isBlank()) {
-            syncStatus = SyncStatus.FAILED
-            syncDetail = "Save a backend URL before syncing"
-            AppLogStore.append(this, "MainActivity", "Manual sync blocked: backend URL not configured")
-            renderStatus()
-            if (showToast) {
-                Toast.makeText(this, "Save a backend URL before syncing", Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        syncStatus = SyncStatus.SUCCESS
-        syncDetail = "Scheduled background sync"
-        renderStatus()
-
-        SmsWorkScheduler.scheduleOneTimeSync(this, "manual")
-        AppLogStore.append(this, "MainActivity", "Manual sync enqueued")
-        lastSyncAt = System.currentTimeMillis()
-        lastSyncedCount = 0
-        renderStatus()
-        renderLogs()
-
-        if (showToast) {
-            Toast.makeText(this, "Background sync scheduled", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     private fun formatLastChecked(): String {
         val timestamp = lastHealthCheckAt ?: return "Not checked yet"
         return DateFormat.getDateTimeInstance().format(Date(timestamp))
+    }
+
+    private fun formatUptime(uptimeMs: Long?): String {
+        val value = uptimeMs ?: return "Unknown"
+        val totalSeconds = value / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return String.format(Locale.US, "%02dh %02dm %02ds", hours, minutes, seconds)
+    }
+
+    private fun refreshLocalNetworkDetails() {
+        val networkInterface = networkInterfaces()
+            .firstOrNull { it.addresses.any(Inet4Address::isSiteLocalAddress) }
+            ?: networkInterfaces().firstOrNull()
+
+        localNetworkAddress = networkInterface?.addresses?.firstOrNull { it.isSiteLocalAddress }?.hostAddress
+            ?: networkInterface?.addresses?.firstOrNull()?.hostAddress
+        localNetworkMacAddress = networkInterface?.hardwareAddress
+            ?.takeIf { it.isNotEmpty() }
+            ?.joinToString(":") { byte -> "%02X".format(Locale.US, byte.toInt() and 0xFF) }
+    }
+
+    private fun networkInterfaces(): List<NetworkInterfaceWithAddresses> {
+        val interfaces = mutableListOf<NetworkInterface>()
+        val networkInterfaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+        while (networkInterfaces.hasMoreElements()) {
+            interfaces += networkInterfaces.nextElement()
+        }
+
+        return interfaces
+            .asSequence()
+            .filterNot { it.isLoopback || !it.isUp }
+            .mapNotNull { networkInterface ->
+                val addresses = mutableListOf<Inet4Address>()
+                val inetAddresses: Enumeration<java.net.InetAddress> = networkInterface.inetAddresses
+                while (inetAddresses.hasMoreElements()) {
+                    val address = inetAddresses.nextElement()
+                    if (address is Inet4Address && !address.isLoopbackAddress) {
+                        addresses += address
+                    }
+                }
+
+                networkInterface.takeIf { addresses.isNotEmpty() }?.let {
+                    NetworkInterfaceWithAddresses(it, addresses)
+                }
+            }
+            .toList()
     }
 
     override fun onDestroy() {
         super.onDestroy()
     }
 
-    private enum class BackendHealthStatus {
-        NOT_CONFIGURED,
+    private enum class ServerHealthStatus {
         CHECKING,
         HEALTHY,
         UNHEALTHY,
     }
 
-    private enum class SyncStatus {
-        NOT_RUN,
-        SYNCING,
-        SUCCESS,
-        FAILED,
-    }
-
     private data class HealthCheckResult(
         val isHealthy: Boolean,
         val detail: String,
+        val payload: JSONObject?,
     )
+
+    private data class NetworkInterfaceWithAddresses(
+        val networkInterface: NetworkInterface,
+        val addresses: List<Inet4Address>,
+    ) {
+        val hardwareAddress: ByteArray?
+            get() = networkInterface.hardwareAddress
+    }
 }
