@@ -7,21 +7,25 @@ import org.junit.Test
 class ApiContractTest {
 
     @Test
-    fun parseLastQuery_defaultsToOneWhenMissing() {
-        assertEquals(1, ApiContract.parseLastQuery(null))
-        assertEquals(1, ApiContract.parseLastQuery("   "))
+    fun parseMessagesRequest_defaultsToOneWhenBodyIsMissingOrEmpty() {
+        assertEquals(1, ApiContract.parseMessagesRequest(null)?.last)
+        assertEquals(1, ApiContract.parseMessagesRequest("   ")?.last)
+        assertEquals(1, ApiContract.parseMessagesRequest("{}")?.last)
     }
 
     @Test
-    fun parseLastQuery_acceptsPositiveIntegersAndMinusOne() {
-        assertEquals(5, ApiContract.parseLastQuery("5"))
-        assertEquals(-1, ApiContract.parseLastQuery("-1"))
+    fun parseMessagesRequest_acceptsPositiveIntegersAndMinusOne() {
+        assertEquals(5, ApiContract.parseMessagesRequest("{\"last\":5}")?.last)
+        assertEquals(-1, ApiContract.parseMessagesRequest("{\"last\":-1}")?.last)
+        assertEquals(7, ApiContract.parseMessagesRequest("{\"last\":\"7\"}")?.last)
     }
 
     @Test
-    fun parseLastQuery_rejectsInvalidValues() {
-        assertNull(ApiContract.parseLastQuery("0"))
-        assertNull(ApiContract.parseLastQuery("-2"))
-        assertNull(ApiContract.parseLastQuery("abc"))
+    fun parseMessagesRequest_rejectsInvalidValues() {
+        assertNull(ApiContract.parseMessagesRequest("{\"last\":0}"))
+        assertNull(ApiContract.parseMessagesRequest("{\"last\":-2}"))
+        assertNull(ApiContract.parseMessagesRequest("{\"last\":\"abc\"}"))
+        assertNull(ApiContract.parseMessagesRequest("{\"last\":null}"))
+        assertNull(ApiContract.parseMessagesRequest("not-json"))
     }
 }

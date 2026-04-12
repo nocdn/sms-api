@@ -11,6 +11,7 @@ This project is now a single Android app. The phone itself runs an HTTP server a
 - The app starts a foreground service that runs an HTTP server on port `6770`
 - The service survives app dismissal and is started again after reboot
 - `GET /api/messages` reads SMS directly from the Android SMS content provider
+- `/api/messages` requires a named API key from the phone UI and expects `Authorization: Bearer sms_##########`
 - SMS stay on the phone; nothing is synced to an external backend
 
 ## Android App
@@ -21,7 +22,9 @@ When the app launches it:
 
 - requests `READ_SMS` permission if needed
 - starts the foreground server service
-- shows local server status and logs
+- shows local server status, API-key management, and logs
+
+API keys are created and revoked directly on the phone. Each key has a user-defined name, is stored locally on-device, and is shown in the app so it can be copied into clients.
 
 The app serves HTTP on:
 
@@ -48,6 +51,8 @@ Example response:
   "uptimeMs": 123456,
   "smsPermissionGranted": true,
   "messageScope": "all_device_sms",
+  "messagesRequireApiKey": true,
+  "apiKeyCount": 2,
   "appVersion": "0.0.1"
 }
 ```
@@ -56,19 +61,36 @@ Example response:
 
 Returns SMS messages ordered newest first.
 
-Query parameters:
+Authentication:
 
-- `last` omitted - return the latest message
-- `last=1` - return the latest message
-- `last=<positive integer>` - return that many latest messages
-- `last=-1` - return all SMS messages available through the device SMS provider
+- send `Authorization: Bearer sms_##########`
+- API keys are created in the Android app UI and can be removed there at any time
+
+Optional JSON request body:
+
+- body omitted - return the latest message
+- `{"last": 1}` - return the latest message
+- `{"last": <positive integer>}` - return that many latest messages
+- `{"last": -1}` - return all SMS messages available through the device SMS provider
 
 Example requests:
 
-```text
-GET /api/messages
-GET /api/messages?last=5
-GET /api/messages?last=-1
+```bash
+curl http://PHONE_IP:6770/api/messages \
+  -X GET \
+  -H 'Authorization: Bearer sms_0123456789'
+
+curl http://PHONE_IP:6770/api/messages \
+  -X GET \
+  -H 'Authorization: Bearer sms_0123456789' \
+  -H 'Content-Type: application/json' \
+  --data '{"last":5}'
+
+curl http://PHONE_IP:6770/api/messages \
+  -X GET \
+  -H 'Authorization: Bearer sms_0123456789' \
+  -H 'Content-Type: application/json' \
+  --data '{"last":-1}'
 ```
 
 Example response:
@@ -87,6 +109,8 @@ Example response:
 ```
 
 If `READ_SMS` permission is missing, `GET /api/messages` returns `503`.
+
+If the API key is missing or invalid, `GET /api/messages` returns `401`.
 
 If `last` is invalid, `GET /api/messages` returns `400`.
 

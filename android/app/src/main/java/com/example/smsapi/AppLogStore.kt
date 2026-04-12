@@ -1,6 +1,7 @@
 package com.example.smsapi
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -15,6 +16,8 @@ object AppLogStore {
 
     @Synchronized
     fun append(context: Context, source: String, message: String) {
+        writeToLogcat(source, message)
+
         val entries = readEntries(context.applicationContext).toMutableList()
         entries.add("[${timestampFormatter.format(Date())}] [$source] $message")
 
@@ -60,6 +63,15 @@ object AppLogStore {
             }
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    private fun writeToLogcat(source: String, message: String) {
+        val tag = "SmsApi/$source"
+        when {
+            message.startsWith("ERR ") || message.contains("Failed", ignoreCase = true) -> Log.e(tag, message)
+            message.startsWith("WARN ") -> Log.w(tag, message)
+            else -> Log.i(tag, message)
         }
     }
 }

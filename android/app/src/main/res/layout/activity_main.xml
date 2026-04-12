@@ -75,6 +75,44 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
+            android:text="API Keys"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Create named API keys here, then send them as Authorization: Bearer sms_########## when calling /api/messages."
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/apiKeyNameInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="API key name"
+            android:inputType="textCapWords" />
+
+        <Button
+            android:id="@+id/generateApiKeyBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Generate API Key"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:id="@+id/apiKeyListContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
             android:text="Endpoints"
             android:textSize="14sp"
             android:textStyle="bold" />
@@ -85,7 +123,7 @@
             android:layout_marginTop="6dp"
             android:background="#11000000"
             android:padding="12dp"
-            android:text="GET /health\nGET /api/messages\nGET /api/messages?last=5\nGET /api/messages?last=-1"
+            android:text="GET /health&#10;GET /api/messages&#10;Authorization: Bearer sms_##########&#10;Optional JSON body: {&quot;last&quot;: 5}&#10;Optional JSON body: {&quot;last&quot;: -1}"
             android:textIsSelectable="true"
             android:textSize="13sp" />
 

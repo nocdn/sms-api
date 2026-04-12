@@ -3,6 +3,7 @@ package com.example.smsapi
 import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -10,6 +11,8 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -38,6 +41,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startServerBtn: Button
     private lateinit var stopServerBtn: Button
     private lateinit var refreshStatusBtn: Button
+    private lateinit var apiKeyNameInput: EditText
+    private lateinit var generateApiKeyBtn: Button
+    private lateinit var apiKeyListContainer: LinearLayout
     private lateinit var clearLogsBtn: Button
     private lateinit var saveLogsBtn: Button
     private val logsRefreshHandler = Handler(Looper.getMainLooper())
@@ -58,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private var messageScope = "all_device_sms"
     private var localNetworkAddress: String? = null
     private var localNetworkMacAddress: String? = null
+    private var apiKeys: List<ApiKeyStore.ApiKey> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,12 +75,16 @@ class MainActivity : AppCompatActivity() {
         startServerBtn = findViewById(R.id.startServerBtn)
         stopServerBtn = findViewById(R.id.stopServerBtn)
         refreshStatusBtn = findViewById(R.id.refreshStatusBtn)
+        apiKeyNameInput = findViewById(R.id.apiKeyNameInput)
+        generateApiKeyBtn = findViewById(R.id.generateApiKeyBtn)
+        apiKeyListContainer = findViewById(R.id.apiKeyListContainer)
         clearLogsBtn = findViewById(R.id.clearLogsBtn)
         saveLogsBtn = findViewById(R.id.saveLogsBtn)
 
         AppLogStore.append(this, "MainActivity", "App opened")
         appVersion = AppMetadata.versionName(this)
         refreshLocalNetworkDetails()
+        refreshApiKeys()
 
         startServerBtn.setOnClickListener {
             startServer()
@@ -87,6 +98,10 @@ class MainActivity : AppCompatActivity() {
             checkServerHealth(showToast = true)
         }
 
+        generateApiKeyBtn.setOnClickListener {
+            generateApiKey()
+        }
+
         clearLogsBtn.setOnClickListener {
             clearLogs()
         }
@@ -98,6 +113,7 @@ class MainActivity : AppCompatActivity() {
         checkPermissions()
         ServerForegroundService.start(this)
         renderStatus()
+        renderApiKeys()
         renderLogs()
         scheduleHealthRefresh(showToast = false)
     }
@@ -110,6 +126,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshLocalNetworkDetails()
+        refreshApiKeys()
+        renderApiKeys()
         checkServerHealth(showToast = false)
     }
 
@@ -154,6 +172,12 @@ class MainActivity : AppCompatActivity() {
             appendLine()
             appendLine("MAC address:")
             appendLine(localNetworkMacAddress ?: "Unavailable")
+            appendLine()
+            appendLine("API key auth:")
+            appendLine("Required for ${ApiContract.MESSAGES_PATH}")
+            appendLine()
+            appendLine("Active API keys:")
+            appendLine(apiKeys.size.toString())
             appendLine()
             appendLine("Health detail:")
             appendLine(serverHealthDetail)
@@ -252,6 +276,108 @@ class MainActivity : AppCompatActivity() {
         }, 750)
     }
 
+    private fun refreshApiKeys() {
+        apiKeys = ApiKeyStore.listKeys(this)
+    }
+
+    private fun generateApiKey() {
+        val name = apiKeyNameInput.text?.toString().orEmpty().trim()
+        if (name.isEmpty()) {
+            Toast.makeText(this, "Enter a name for the API key", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val apiKey = try {
+            ApiKeyStore.createKey(this, name)
+        } catch (error: IllegalArgumentException) {
+            Toast.makeText(this, error.message ?: "Failed to create API key", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        apiKeyNameInput.text?.clear()
+        refreshApiKeys()
+        renderApiKeys()
+        renderStatus()
+        Toast.makeText(this, "Created API key ${apiKey.value}", Toast.LENGTH_LONG).show()
+    }
+
+    private fun revokeApiKey(value: String) {
+        if (!ApiKeyStore.revokeKey(this, value)) {
+            Toast.makeText(this, "API key not found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        refreshApiKeys()
+        renderApiKeys()
+        renderStatus()
+        Toast.makeText(this, "API key removed", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun renderApiKeys() {
+        apiKeyListContainer.removeAllViews()
+
+        if (apiKeys.isEmpty()) {
+            apiKeyListContainer.addView(
+                TextView(this).apply {
+                    text = "No API keys yet. Create one to access ${ApiContract.MESSAGES_PATH}."
+                    textSize = 13f
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    setBackgroundColor(Color.parseColor("#11000000"))
+                },
+            )
+            return
+        }
+
+        apiKeys.forEach { apiKey ->
+            apiKeyListContainer.addView(createApiKeyView(apiKey))
+        }
+    }
+
+    private fun createApiKeyView(apiKey: ApiKeyStore.ApiKey): LinearLayout {
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            bottomMargin = dp(8)
+        }
+
+        return LinearLayout(this).apply {
+            layoutParams = params
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundColor(Color.parseColor("#11000000"))
+
+            addView(
+                TextView(context).apply {
+                    text = buildString {
+                        appendLine(apiKey.name)
+                        appendLine(apiKey.value)
+                        append("Created: ${DateFormat.getDateTimeInstance().format(Date(apiKey.createdAt))}")
+                    }
+                    textSize = 13f
+                    setTextIsSelectable(true)
+                },
+            )
+
+            addView(
+                Button(context).apply {
+                    text = "Remove"
+                    textSize = 12f
+                    val buttonParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        topMargin = dp(8)
+                    }
+                    layoutParams = buttonParams
+                    setOnClickListener {
+                        revokeApiKey(apiKey.value)
+                    }
+                },
+            )
+        }
+    }
+
     private fun checkServerHealth(showToast: Boolean) {
         val healthUrl = ServerForegroundService.healthUrl()
 
@@ -316,6 +442,7 @@ class MainActivity : AppCompatActivity() {
                     ?: AppMetadata.versionName(this)
                 messageScope = result.payload?.optString("messageScope")?.takeUnless { it.isNullOrBlank() }
                     ?: "all_device_sms"
+                refreshApiKeys()
 
                 renderStatus()
 
@@ -344,6 +471,10 @@ class MainActivity : AppCompatActivity() {
         val minutes = (totalSeconds % 3600) / 60
         val seconds = totalSeconds % 60
         return String.format(Locale.US, "%02dh %02dm %02ds", hours, minutes, seconds)
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
     }
 
     private fun refreshLocalNetworkDetails() {
